@@ -1,0 +1,44 @@
+╔══════════════════════════════════════════════════════════════╗
+║         VOICE MEETING AGENT - QUICK START GUIDE              ║
+╚══════════════════════════════════════════════════════════════╝
+
+STEP 1: Create Environment File
+─────────────────────────────────
+Create server/.env file with your OpenAI API key:
+
+  cd server
+  echo "OPENAI_API_KEY=your-api-key-here" > .env
+  echo "PORT=3001" >> .env
+  cd ..
+
+  (Replace "your-api-key-here" with your actual OpenAI API key)
+
+
+STEP 2: Run the Application
+────────────────────────────
+From the root directory, run:
+
+  npm run dev
+
+This starts both frontend and backend servers.
+
+
+STEP 3: Open in Browser
+───────────────────────
+Open http://localhost:3000 in Chrome or Edge
+
+Enter your name and start speaking!
+
+
+IMPORTANT NOTES:
+────────────────
+✓ You MUST have an OpenAI API key (get from platform.openai.com)
+✓ Use Chrome or Edge browser (required for speech recognition)
+✓ Supabase is optional - app works with mock database
+
+
+TROUBLESHOOTING:
+────────────────
+• "Speech recognition not supported" → Use Chrome/Edge
+• "OpenAI API error" → Check your API key in server/.env
+• "Cannot connect" → Make sure backend is running on port 3001
