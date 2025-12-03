@@ -4,117 +4,97 @@ import './EnhancedVoiceAgent.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
-  // Core states
+const EnhancedVoiceAgent = ({ username }) => {
+  // Voice & conversation state
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
   
-  // Feature states
+  // Meetings state
+  const [meetings, setMeetings] = useState([]);
+  const [selectedMeeting, setSelectedMeeting] = useState(null);
+  
+  // UI state
+  const [view, setView] = useState('home'); // 'home', 'calendar', 'settings'
   const [darkMode, setDarkMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showMeetings, setShowMeetings] = useState(true);
-  const [continuousMode, setContinuousMode] = useState(false);
-  const [meetings, setMeetings] = useState([]);
-  const [selectedView, setSelectedView] = useState('conversation'); // conversation, meetings, calendar
+  const [showQuickActions, setShowQuickActions] = useState(true);
   
-  // Voice settings
+  // Settings state
+  const [continuousMode, setContinuousMode] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState({
     rate: 1.0,
     pitch: 1.0,
-    volume: 1.0
+    volume: 1.0,
   });
   
-  // References
+  // Refs
   const recognitionRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
   const hasGreetedRef = useRef(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
-  const [checkingPermission, setCheckingPermission] = useState(false);
+  const conversationEndRef = useRef(null);
 
-  // Load preferences from localStorage
-  useEffect(() => {
-    const savedDarkMode = localStorage.getItem('voiceAgentDarkMode') === 'true';
-    const savedContinuousMode = localStorage.getItem('voiceAgentContinuousMode') === 'true';
-    const savedVoiceSettings = localStorage.getItem('voiceAgentVoiceSettings');
-    
-    setDarkMode(savedDarkMode);
-    setContinuousMode(savedContinuousMode);
-    if (savedVoiceSettings) {
-      setVoiceSettings(JSON.parse(savedVoiceSettings));
+  // Check and request microphone permission
+  const requestMicrophonePermission = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setError('Microphone access requires HTTPS or localhost');
+        return false;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setPermissionGranted(true);
+      setError(null);
+      return true;
+    } catch (err) {
+      console.error('Microphone permission error:', err);
+      setPermissionGranted(false);
+      setError('Microphone access denied. Please allow microphone access in your browser settings.');
+      return false;
     }
-    
+  };
+
+  // Load dark mode preference
+  useEffect(() => {
+    const savedDarkMode = localStorage.getItem('darkMode') === 'true';
+    setDarkMode(savedDarkMode);
     if (savedDarkMode) {
       document.documentElement.classList.add('dark-mode');
     }
+
+    const savedVoiceSettings = localStorage.getItem('voiceSettings');
+    if (savedVoiceSettings) {
+      setVoiceSettings(JSON.parse(savedVoiceSettings));
+    }
+
+    const savedContinuousMode = localStorage.getItem('continuousMode') === 'true';
+    setContinuousMode(savedContinuousMode);
   }, []);
 
   // Fetch meetings
   const fetchMeetings = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/meetings`);
-      setMeetings(response.data);
-    } catch (err) {
-      console.error('Error fetching meetings:', err);
+      setMeetings(response.data || []);
+    } catch (error) {
+      console.error('Error fetching meetings:', error);
     }
   };
 
   useEffect(() => {
     fetchMeetings();
-    const interval = setInterval(fetchMeetings, 30000); // Refresh every 30s
+    const interval = setInterval(fetchMeetings, 30000); // Refresh every 30 seconds
     return () => clearInterval(interval);
-  }, []);
-
-  // Check microphone permission
-  const checkMicrophonePermission = async () => {
-    if (!navigator.permissions) return null;
-    try {
-      const result = await navigator.permissions.query({ name: 'microphone' });
-      return result.state;
-    } catch (err) {
-      return null;
-    }
-  };
-
-  const requestMicrophonePermission = async () => {
-    setCheckingPermission(true);
-    setError(null);
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setError('Microphone access requires HTTPS or localhost');
-        setCheckingPermission(false);
-        return false;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
-      setPermissionGranted(true);
-      setError(null);
-      setCheckingPermission(false);
-      return true;
-    } catch (err) {
-      setPermissionGranted(false);
-      setCheckingPermission(false);
-      setError('Microphone access denied. Please allow microphone access.');
-      return false;
-    }
-  };
-
-  useEffect(() => {
-    const checkPermission = async () => {
-      const permissionState = await checkMicrophonePermission();
-      if (permissionState === 'granted') {
-        setPermissionGranted(true);
-      }
-    };
-    checkPermission();
   }, []);
 
   // Initialize speech recognition
   useEffect(() => {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      setError('Speech recognition not supported. Use Chrome or Edge.');
+      setError('Speech recognition not supported. Please use Chrome or Edge.');
       return;
     }
 
@@ -135,6 +115,7 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
       setStatus('processing');
       
       const userMessage = { role: 'user', content: transcript };
+      
       let updatedHistory;
       setConversationHistory(prev => {
         updatedHistory = [...prev, userMessage];
@@ -158,25 +139,25 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
         });
 
         await speakText(agentResponse);
-        await fetchMeetings(); // Refresh meetings after agent response
+        await fetchMeetings(); // Refresh meetings after any action
         
         setStatus('idle');
         
-        // Auto restart in continuous mode
-        if (continuousMode) {
+        // Continue listening if continuous mode is enabled
+        if (continuousMode && !isSpeaking) {
           setTimeout(() => {
-            if (recognitionRef.current) {
+            if (recognitionRef.current && !isListening) {
               try {
                 recognitionRef.current.start();
               } catch (e) {
-                console.log('Recognition already started');
+                console.log('Could not restart recognition:', e);
               }
             }
           }, 1000);
         }
       } catch (err) {
         console.error('Error processing message:', err);
-        setError('Failed to process your request.');
+        setError('Failed to process your request. Please try again.');
         setStatus('idle');
       }
     };
@@ -188,23 +169,14 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
       
       if (event.error === 'no-speech') {
         setError(null);
-        if (continuousMode) {
-          setTimeout(() => {
-            if (recognitionRef.current) {
-              try {
-                recognitionRef.current.start();
-              } catch (e) {}
-            }
-          }, 1000);
-        }
         return;
       }
       
       if (event.error === 'not-allowed') {
-        setError('Microphone access denied.');
+        setError('Microphone access denied. Please allow microphone access.');
         setPermissionGranted(false);
       } else if (event.error !== 'aborted') {
-        setError(`Recognition error: ${event.error}`);
+        setError(`Speech recognition error: ${event.error}`);
       }
     };
 
@@ -216,8 +188,9 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
     };
 
     recognitionRef.current = recognition;
-  }, [conversationHistory, status, continuousMode]);
+  }, [conversationHistory, status, continuousMode, isSpeaking, isListening]);
 
+  // Text-to-speech function
   const speakText = (text) => {
     return new Promise((resolve) => {
       if (synthRef.current.speaking) {
@@ -225,7 +198,6 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
       }
 
       setIsSpeaking(true);
-      setStatus('speaking');
       const utterance = new SpeechSynthesisUtterance(text);
       
       utterance.rate = voiceSettings.rate;
@@ -234,13 +206,11 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
 
       utterance.onend = () => {
         setIsSpeaking(false);
-        setStatus('idle');
         resolve();
       };
 
       utterance.onerror = () => {
         setIsSpeaking(false);
-        setStatus('idle');
         resolve();
       };
 
@@ -248,6 +218,7 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
     });
   };
 
+  // Toggle listening
   const toggleListening = async () => {
     if (isSpeaking) {
       synthRef.current.cancel();
@@ -269,73 +240,69 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
       try {
         recognitionRef.current?.start();
       } catch (err) {
-        setError('Could not start speech recognition.');
+        console.error('Error starting recognition:', err);
+        setError('Could not start speech recognition. Please try again.');
       }
     }
   };
 
-  const handleQuickAction = async (action) => {
-    const actions = {
-      'list': 'What meetings do I have?',
-      'today': 'What meetings do I have today?',
-      'schedule': 'Schedule a new meeting',
-      'clear': 'Clear conversation'
-    };
-    
-    if (action === 'clear') {
-      setConversationHistory([]);
-      return;
-    }
-    
-    const message = actions[action];
-    if (message) {
-      const userMessage = { role: 'user', content: message };
-      let updatedHistory;
-      setConversationHistory(prev => {
-        updatedHistory = [...prev, userMessage];
-        return updatedHistory;
-      });
-
-      try {
-        setStatus('processing');
-        const response = await axios.post(`${API_BASE_URL}/api/chat`, {
-          message,
-          conversationHistory: updatedHistory
-        });
-
-        const agentResponse = response.data.response;
-        setConversationHistory(prev => [...prev, { role: 'assistant', content: agentResponse }]);
-        await speakText(agentResponse);
-        await fetchMeetings();
-        setStatus('idle');
-      } catch (err) {
-        setError('Failed to process quick action.');
-        setStatus('idle');
-      }
-    }
-  };
-
+  // Toggle dark mode
   const toggleDarkMode = () => {
     const newMode = !darkMode;
     setDarkMode(newMode);
-    localStorage.setItem('voiceAgentDarkMode', newMode);
-    document.documentElement.classList.toggle('dark-mode');
+    localStorage.setItem('darkMode', newMode);
+    if (newMode) {
+      document.documentElement.classList.add('dark-mode');
+    } else {
+      document.documentElement.classList.remove('dark-mode');
+    }
   };
 
+  // Toggle continuous mode
   const toggleContinuousMode = () => {
     const newMode = !continuousMode;
     setContinuousMode(newMode);
-    localStorage.setItem('voiceAgentContinuousMode', newMode);
+    localStorage.setItem('continuousMode', newMode);
   };
 
+  // Update voice settings
   const updateVoiceSettings = (key, value) => {
-    const newSettings = { ...voiceSettings, [key]: parseFloat(value) };
+    const newSettings = { ...voiceSettings, [key]: value };
     setVoiceSettings(newSettings);
-    localStorage.setItem('voiceAgentVoiceSettings', JSON.stringify(newSettings));
+    localStorage.setItem('voiceSettings', JSON.stringify(newSettings));
   };
 
-  const exportMeetings = () => {
-    const icsContent = generateICS(meetings);
+  // Export meetings to ICS
+  const exportToICS = () => {
+    if (meetings.length === 0) {
+      alert('No meetings to export');
+      return;
+    }
+
+    let icsContent = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Voice Meeting Agent//EN\n';
+    
+    meetings.forEach(meeting => {
+      const startDate = new Date(meeting.datetime);
+      const endDate = new Date(startDate.getTime() + meeting.duration_minutes * 60000);
+      
+      const formatDate = (date) => {
+        return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      };
+
+      icsContent += 'BEGIN:VEVENT\n';
+      icsContent += `UID:${meeting.id}@voiceagent\n`;
+      icsContent += `DTSTAMP:${formatDate(new Date())}\n`;
+      icsContent += `DTSTART:${formatDate(startDate)}\n`;
+      icsContent += `DTEND:${formatDate(endDate)}\n`;
+      icsContent += `SUMMARY:${meeting.title}\n`;
+      if (meeting.notes) {
+        icsContent += `DESCRIPTION:${meeting.notes.replace(/\n/g, '\\n')}\n`;
+      }
+      icsContent += 'END:VEVENT\n';
+    });
+
+    icsContent += 'END:VCALENDAR';
+
     const blob = new Blob([icsContent], { type: 'text/calendar' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -345,253 +312,335 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
     URL.revokeObjectURL(url);
   };
 
-  const generateICS = (meetings) => {
-    let ics = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Voice Agent//Meetings//EN\n';
-    meetings.forEach(meeting => {
-      const start = new Date(meeting.datetime).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-      const end = new Date(new Date(meeting.datetime).getTime() + meeting.duration_minutes * 60000).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-      ics += `BEGIN:VEVENT\nUID:${meeting.id}@voiceagent.com\nDTSTART:${start}\nDTEND:${end}\nSUMMARY:${meeting.title}\nDESCRIPTION:${meeting.notes || ''}\nEND:VEVENT\n`;
-    });
-    ics += 'END:VCALENDAR';
-    return ics;
+  // Delete meeting
+  const deleteMeeting = async (id) => {
+    if (!confirm('Are you sure you want to delete this meeting?')) return;
+    
+    try {
+      await axios.delete(`${API_BASE_URL}/api/meetings/${id}`);
+      await fetchMeetings();
+      setSelectedMeeting(null);
+    } catch (error) {
+      console.error('Error deleting meeting:', error);
+      alert('Failed to delete meeting');
+    }
   };
 
-  const deleteMeeting = async (id) => {
-    if (confirm('Delete this meeting?')) {
+  // Quick actions
+  const quickActions = [
+    { icon: '📅', label: 'Schedule Meeting', command: 'Schedule a meeting' },
+    { icon: '📋', label: 'List Meetings', command: 'What meetings do I have?' },
+    { icon: '🔍', label: 'Search', command: 'Find meetings' },
+    { icon: '📥', label: 'Export', action: exportToICS },
+  ];
+
+  const executeQuickAction = async (action) => {
+    if (action.action) {
+      action.action();
+      return;
+    }
+    
+    if (action.command) {
+      const userMessage = { role: 'user', content: action.command };
+      setConversationHistory(prev => [...prev, userMessage]);
+      
       try {
-        await axios.delete(`${API_BASE_URL}/api/meetings/${id}`);
+        const response = await axios.post(`${API_BASE_URL}/api/chat`, {
+          message: action.command,
+          conversationHistory: [...conversationHistory, userMessage]
+        });
+
+        const agentResponse = response.data.response;
+        setConversationHistory(prev => [...prev, { role: 'assistant', content: agentResponse }]);
+        await speakText(agentResponse);
         await fetchMeetings();
-      } catch (err) {
-        setError('Failed to delete meeting.');
+      } catch (error) {
+        console.error('Error executing quick action:', error);
       }
     }
   };
 
-  const getMeetingStats = () => {
-    const total = meetings.length;
-    const today = meetings.filter(m => {
-      const meetingDate = new Date(m.datetime).toDateString();
-      return meetingDate === new Date().toDateString();
-    }).length;
-    const upcoming = meetings.filter(m => new Date(m.datetime) > new Date()).length;
-    return { total, today, upcoming };
+  // Scroll to bottom of conversation
+  useEffect(() => {
+    conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [conversationHistory]);
+
+  // Format date for display
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    
+    if (date.toDateString() === now.toDateString()) {
+      return `Today at ${timeStr}`;
+    } else if (date.toDateString() === tomorrow.toDateString()) {
+      return `Tomorrow at ${timeStr}`;
+    } else {
+      return date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      });
+    }
   };
 
-  const stats = getMeetingStats();
-
   return (
-    <div className={`enhanced-voice-agent ${darkMode ? 'dark' : ''}`}>
-      {/* Top Bar */}
-      <div className="top-bar">
-        <div className="top-bar-left">
-          <h1>🎙️ Voice Agent</h1>
-          <span className="username-badge">👤 {username}</span>
+    <div className="enhanced-voice-agent">
+      {/* Header */}
+      <div className="agent-header">
+        <div className="header-left">
+          <h1>🎙️ Voice Meeting Agent</h1>
+          <p className="user-greeting">Welcome back, {username}!</p>
         </div>
-        <div className="top-bar-right">
-          <button className="icon-btn" onClick={() => setShowSettings(!showSettings)} title="Settings">
-            ⚙️
-          </button>
-          <button className="icon-btn" onClick={toggleDarkMode} title="Toggle Dark Mode">
+        <div className="header-right">
+          <button 
+            className={`icon-btn ${darkMode ? 'active' : ''}`}
+            onClick={toggleDarkMode}
+            title="Toggle Dark Mode"
+          >
             {darkMode ? '☀️' : '🌙'}
           </button>
-          <button className="icon-btn" onClick={onShowHelp} title="Help">
-            ❓
+          <button 
+            className="icon-btn"
+            onClick={() => setShowSettings(!showSettings)}
+            title="Settings"
+          >
+            ⚙️
           </button>
+          <div className="stats-badge">
+            <span className="badge-number">{meetings.length}</span>
+            <span className="badge-label">Meetings</span>
+          </div>
         </div>
       </div>
 
-      <div className="main-container">
+      {/* Main Content */}
+      <div className="agent-content">
         {/* Sidebar */}
         <div className="sidebar">
-          <div className="stats-cards">
-            <div className="stat-card">
-              <span className="stat-icon">📊</span>
-              <div>
-                <div className="stat-value">{stats.total}</div>
-                <div className="stat-label">Total</div>
-              </div>
-            </div>
-            <div className="stat-card">
-              <span className="stat-icon">📅</span>
-              <div>
-                <div className="stat-value">{stats.today}</div>
-                <div className="stat-label">Today</div>
-              </div>
-            </div>
-            <div className="stat-card">
-              <span className="stat-icon">⏰</span>
-              <div>
-                <div className="stat-value">{stats.upcoming}</div>
-                <div className="stat-label">Upcoming</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="nav-tabs">
+          <div className="nav-buttons">
             <button 
-              className={`nav-tab ${selectedView === 'conversation' ? 'active' : ''}`}
-              onClick={() => setSelectedView('conversation')}
+              className={`nav-btn ${view === 'home' ? 'active' : ''}`}
+              onClick={() => setView('home')}
             >
-              <span>💬</span> Chat
+              <span className="nav-icon">🏠</span>
+              <span>Home</span>
             </button>
             <button 
-              className={`nav-tab ${selectedView === 'meetings' ? 'active' : ''}`}
-              onClick={() => setSelectedView('meetings')}
+              className={`nav-btn ${view === 'calendar' ? 'active' : ''}`}
+              onClick={() => setView('calendar')}
             >
-              <span>📋</span> Meetings
+              <span className="nav-icon">📅</span>
+              <span>Calendar</span>
             </button>
           </div>
 
-          <div className="quick-actions">
-            <h3>Quick Actions</h3>
-            <button className="quick-action-btn" onClick={() => handleQuickAction('list')}>
-              📋 List All
-            </button>
-            <button className="quick-action-btn" onClick={() => handleQuickAction('today')}>
-              📅 Today's Meetings
-            </button>
-            <button className="quick-action-btn" onClick={() => handleQuickAction('schedule')}>
-              ➕ Schedule New
-            </button>
-            <button className="quick-action-btn" onClick={exportMeetings} disabled={meetings.length === 0}>
-              📥 Export Calendar
-            </button>
-            <button className="quick-action-btn danger" onClick={() => handleQuickAction('clear')}>
-              🗑️ Clear Chat
-            </button>
-          </div>
-        </div>
-
-        {/* Main Content */}
-        <div className="main-content">
-          {/* Voice Control Panel */}
-          <div className="voice-control-panel">
-            <div className="status-display">
-              <div className={`status-indicator-enhanced ${status}`}>
-                <div className="status-dot-enhanced"></div>
-                <span className="status-text-enhanced">
-                  {status === 'idle' && '🟢 Ready'}
-                  {status === 'listening' && '🔴 Listening...'}
-                  {status === 'processing' && '🔄 Processing...'}
-                  {status === 'speaking' && '🔊 Speaking...'}
-                </span>
-              </div>
-              {continuousMode && (
-                <span className="continuous-badge">🔄 Continuous Mode</span>
-              )}
-            </div>
-
-            {error && (
-              <div className="error-banner">
-                <span>⚠️ {error}</span>
-                <button onClick={() => setError(null)}>×</button>
-              </div>
-            )}
-
-            <div className="voice-controls">
-              {!permissionGranted && !isListening ? (
-                <button className="permission-btn-enhanced" onClick={requestMicrophonePermission} disabled={checkingPermission}>
-                  {checkingPermission ? '⏳ Requesting...' : '🔒 Grant Microphone Access'}
+          {/* Quick Actions */}
+          {showQuickActions && (
+            <div className="quick-actions-panel">
+              <div className="panel-header">
+                <h3>⚡ Quick Actions</h3>
+                <button 
+                  className="close-btn"
+                  onClick={() => setShowQuickActions(false)}
+                >
+                  ×
                 </button>
-              ) : (
-                <>
+              </div>
+              <div className="quick-actions-grid">
+                {quickActions.map((action, index) => (
                   <button
-                    className={`voice-btn-main ${isListening ? 'listening' : ''}`}
-                    onClick={toggleListening}
-                    disabled={status === 'processing'}
+                    key={index}
+                    className="quick-action-btn"
+                    onClick={() => executeQuickAction(action)}
+                    title={action.label}
                   >
-                    <span className="mic-icon-large">{isListening ? '🎤' : '🎙️'}</span>
-                    <span className="btn-text">{isListening ? 'Stop Listening' : 'Start Listening'}</span>
+                    <span className="action-icon">{action.icon}</span>
+                    <span className="action-label">{action.label}</span>
                   </button>
-                  
-                  {isSpeaking && (
-                    <button className="voice-btn-stop" onClick={() => synthRef.current.cancel()}>
-                      🛑 Stop Speaking
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Content Area */}
-          {selectedView === 'conversation' && (
-            <div className="conversation-panel">
-              <h2>💬 Conversation</h2>
-              <div className="messages-container">
-                {conversationHistory.length === 0 ? (
-                  <div className="empty-state-enhanced">
-                    <span className="empty-icon">🎤</span>
-                    <p>Click "Start Listening" and speak naturally</p>
-                    <p className="empty-hint">Try: "Schedule a meeting" or "What meetings do I have?"</p>
-                  </div>
-                ) : (
-                  conversationHistory.map((msg, index) => (
-                    <div key={index} className={`message-enhanced ${msg.role}`}>
-                      <div className="message-avatar">
-                        {msg.role === 'user' ? '👤' : '🤖'}
-                      </div>
-                      <div className="message-bubble">
-                        <div className="message-role-enhanced">
-                          {msg.role === 'user' ? 'You' : 'Assistant'}
-                        </div>
-                        <div className="message-content-enhanced">{msg.content}</div>
-                      </div>
-                    </div>
-                  ))
-                )}
+                ))}
               </div>
             </div>
           )}
+        </div>
 
-          {selectedView === 'meetings' && (
-            <div className="meetings-panel">
-              <div className="meetings-header">
-                <h2>📋 Your Meetings</h2>
-                <button className="refresh-btn" onClick={fetchMeetings}>
-                  🔄 Refresh
-                </button>
-              </div>
-              <div className="meetings-grid">
-                {meetings.length === 0 ? (
-                  <div className="empty-state-enhanced">
-                    <span className="empty-icon">📅</span>
-                    <p>No meetings scheduled</p>
-                    <p className="empty-hint">Say "Schedule a meeting" to create one</p>
+        {/* Main View */}
+        <div className="main-view">
+          {view === 'home' && (
+            <>
+              {/* Voice Control Section */}
+              <div className="voice-control-card">
+                <div className="control-header">
+                  <h2>🎤 Voice Control</h2>
+                  <div className="control-options">
+                    <label className="toggle-label">
+                      <input
+                        type="checkbox"
+                        checked={continuousMode}
+                        onChange={toggleContinuousMode}
+                      />
+                      <span>Continuous Mode</span>
+                    </label>
                   </div>
-                ) : (
-                  meetings.map(meeting => (
-                    <div key={meeting.id} className="meeting-card">
-                      <div className="meeting-card-header">
-                        <h3>{meeting.title}</h3>
-                        <button className="delete-btn" onClick={() => deleteMeeting(meeting.id)}>
-                          🗑️
-                        </button>
-                      </div>
-                      <div className="meeting-card-body">
-                        <div className="meeting-detail">
-                          <span className="detail-icon">📅</span>
-                          <span>{new Date(meeting.datetime).toLocaleDateString()}</span>
-                        </div>
-                        <div className="meeting-detail">
-                          <span className="detail-icon">⏰</span>
-                          <span>{new Date(meeting.datetime).toLocaleTimeString()}</span>
-                        </div>
-                        <div className="meeting-detail">
-                          <span className="detail-icon">⏱️</span>
-                          <span>{meeting.duration_minutes} minutes</span>
-                        </div>
-                        {meeting.notes && (
-                          <div className="meeting-notes">
-                            <span className="detail-icon">📝</span>
-                            <span>{meeting.notes}</span>
-                          </div>
-                        )}
+                </div>
+
+                <div className={`status-indicator ${status}`}>
+                  <div className="status-dot"></div>
+                  <span className="status-text">
+                    {status === 'idle' && 'Ready to listen'}
+                    {status === 'listening' && '🎤 Listening...'}
+                    {status === 'processing' && '🤔 Processing...'}
+                  </span>
+                </div>
+
+                {error && (
+                  <div className="error-alert">
+                    <span>⚠️</span>
+                    <p>{error}</p>
+                    <button onClick={() => setError(null)}>×</button>
+                  </div>
+                )}
+
+                <div className="voice-controls">
+                  <button
+                    className={`main-voice-btn ${isListening ? 'active' : ''}`}
+                    onClick={toggleListening}
+                    disabled={status === 'processing'}
+                  >
+                    {isListening ? (
+                      <>
+                        <span className="btn-icon pulse">🔴</span>
+                        <span>Stop Listening</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="btn-icon">🎤</span>
+                        <span>Start Listening</span>
+                      </>
+                    )}
+                  </button>
+
+                  {isSpeaking && (
+                    <button 
+                      className="secondary-voice-btn"
+                      onClick={() => synthRef.current.cancel()}
+                    >
+                      🔇 Stop Speaking
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Conversation History */}
+              <div className="conversation-card">
+                <h3>💬 Conversation</h3>
+                <div className="messages-container">
+                  {conversationHistory.length === 0 ? (
+                    <div className="empty-state">
+                      <span className="empty-icon">🎤</span>
+                      <p>Start speaking to begin...</p>
+                      <div className="example-commands">
+                        <p>Try saying:</p>
+                        <ul>
+                          <li>"Schedule a meeting for tomorrow"</li>
+                          <li>"Show my meetings"</li>
+                          <li>"What's next on my calendar?"</li>
+                        </ul>
                       </div>
                     </div>
-                  ))
-                )}
+                  ) : (
+                    <>
+                      {conversationHistory.map((msg, index) => (
+                        <div key={index} className={`message ${msg.role}`}>
+                          <div className="message-avatar">
+                            {msg.role === 'user' ? '👤' : '🤖'}
+                          </div>
+                          <div className="message-content">
+                            <div className="message-header">
+                              {msg.role === 'user' ? 'You' : 'Assistant'}
+                            </div>
+                            <p>{msg.content}</p>
+                          </div>
+                        </div>
+                      ))}
+                      <div ref={conversationEndRef} />
+                    </>
+                  )}
+                </div>
               </div>
+            </>
+          )}
+
+          {view === 'calendar' && (
+            <div className="calendar-view">
+              <div className="calendar-header">
+                <h2>📅 Your Meetings</h2>
+                <button className="export-btn" onClick={exportToICS}>
+                  📥 Export to Calendar
+                </button>
+              </div>
+
+              {meetings.length === 0 ? (
+                <div className="empty-state">
+                  <span className="empty-icon">📅</span>
+                  <p>No meetings scheduled yet</p>
+                  <button 
+                    className="create-meeting-btn"
+                    onClick={() => {
+                      setView('home');
+                      setTimeout(() => toggleListening(), 300);
+                    }}
+                  >
+                    Schedule Your First Meeting
+                  </button>
+                </div>
+              ) : (
+                <div className="meetings-grid">
+                  {meetings.map((meeting) => (
+                    <div 
+                      key={meeting.id} 
+                      className={`meeting-card ${selectedMeeting?.id === meeting.id ? 'selected' : ''}`}
+                      onClick={() => setSelectedMeeting(meeting)}
+                    >
+                      <div className="meeting-time">
+                        <span className="time-icon">🕒</span>
+                        <span>{formatDate(meeting.datetime)}</span>
+                      </div>
+                      <h3 className="meeting-title">{meeting.title}</h3>
+                      <div className="meeting-duration">
+                        {meeting.duration_minutes} minutes
+                      </div>
+                      {meeting.notes && (
+                        <p className="meeting-notes">{meeting.notes}</p>
+                      )}
+                      <div className="meeting-actions">
+                        <button 
+                          className="action-btn edit"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // TODO: Implement edit
+                          }}
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button 
+                          className="action-btn delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteMeeting(meeting.id);
+                          }}
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -605,15 +654,14 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
               <h2>⚙️ Settings</h2>
               <button className="close-btn" onClick={() => setShowSettings(false)}>×</button>
             </div>
-            
+
             <div className="settings-content">
-              <div className="setting-group">
+              <div className="setting-section">
                 <h3>🎚️ Voice Settings</h3>
                 
                 <div className="setting-item">
                   <label>
-                    <span>Speed</span>
-                    <span className="setting-value">{voiceSettings.rate.toFixed(1)}x</span>
+                    Speech Rate: {voiceSettings.rate.toFixed(1)}x
                   </label>
                   <input
                     type="range"
@@ -621,15 +669,13 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
                     max="2"
                     step="0.1"
                     value={voiceSettings.rate}
-                    onChange={(e) => updateVoiceSettings('rate', e.target.value)}
-                    className="slider"
+                    onChange={(e) => updateVoiceSettings('rate', parseFloat(e.target.value))}
                   />
                 </div>
 
                 <div className="setting-item">
                   <label>
-                    <span>Pitch</span>
-                    <span className="setting-value">{voiceSettings.pitch.toFixed(1)}</span>
+                    Pitch: {voiceSettings.pitch.toFixed(1)}x
                   </label>
                   <input
                     type="range"
@@ -637,15 +683,13 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
                     max="2"
                     step="0.1"
                     value={voiceSettings.pitch}
-                    onChange={(e) => updateVoiceSettings('pitch', e.target.value)}
-                    className="slider"
+                    onChange={(e) => updateVoiceSettings('pitch', parseFloat(e.target.value))}
                   />
                 </div>
 
                 <div className="setting-item">
                   <label>
-                    <span>Volume</span>
-                    <span className="setting-value">{Math.round(voiceSettings.volume * 100)}%</span>
+                    Volume: {Math.round(voiceSettings.volume * 100)}%
                   </label>
                   <input
                     type="range"
@@ -653,53 +697,61 @@ const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
                     max="1"
                     step="0.1"
                     value={voiceSettings.volume}
-                    onChange={(e) => updateVoiceSettings('volume', e.target.value)}
-                    className="slider"
+                    onChange={(e) => updateVoiceSettings('volume', parseFloat(e.target.value))}
                   />
                 </div>
+
+                <button 
+                  className="test-voice-btn"
+                  onClick={() => speakText('This is how I sound with your current settings.')}
+                >
+                  🔊 Test Voice
+                </button>
               </div>
 
-              <div className="setting-group">
-                <h3>🎛️ Options</h3>
+              <div className="setting-section">
+                <h3>🎛️ Preferences</h3>
                 
                 <div className="setting-toggle">
-                  <div>
-                    <div className="toggle-label">Continuous Listening Mode</div>
-                    <div className="toggle-description">Auto-restart after each interaction</div>
-                  </div>
-                  <label className="toggle-switch">
-                    <input type="checkbox" checked={continuousMode} onChange={toggleContinuousMode} />
-                    <span className="toggle-slider"></span>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={darkMode}
+                      onChange={toggleDarkMode}
+                    />
+                    <span>🌙 Dark Mode</span>
                   </label>
                 </div>
 
                 <div className="setting-toggle">
-                  <div>
-                    <div className="toggle-label">Dark Mode</div>
-                    <div className="toggle-description">Use dark theme</div>
-                  </div>
-                  <label className="toggle-switch">
-                    <input type="checkbox" checked={darkMode} onChange={toggleDarkMode} />
-                    <span className="toggle-slider"></span>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={continuousMode}
+                      onChange={toggleContinuousMode}
+                    />
+                    <span>🔄 Continuous Listening Mode</span>
+                  </label>
+                </div>
+
+                <div className="setting-toggle">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={showQuickActions}
+                      onChange={() => setShowQuickActions(!showQuickActions)}
+                    />
+                    <span>⚡ Show Quick Actions</span>
                   </label>
                 </div>
               </div>
 
-              <div className="setting-group">
-                <h3>ℹ️ Information</h3>
-                <div className="info-grid">
-                  <div className="info-item">
-                    <span>Browser</span>
-                    <span>{navigator.userAgent.includes('Chrome') ? 'Chrome ✓' : 'Other'}</span>
-                  </div>
-                  <div className="info-item">
-                    <span>Microphone</span>
-                    <span>{permissionGranted ? 'Granted ✓' : 'Not granted'}</span>
-                  </div>
-                  <div className="info-item">
-                    <span>Total Meetings</span>
-                    <span>{meetings.length}</span>
-                  </div>
+              <div className="setting-section">
+                <h3>ℹ️ About</h3>
+                <div className="about-info">
+                  <p><strong>Version:</strong> 2.0.0</p>
+                  <p><strong>AI Model:</strong> GPT-4 with LangChain</p>
+                  <p><strong>Voice:</strong> Browser Web Speech API</p>
                 </div>
               </div>
             </div>

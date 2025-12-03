@@ -66,6 +66,49 @@ async function removeMeeting(meetingId) {
   }
 }
 
+// Helper function to check for meeting conflicts
+function checkMeetingConflicts(newMeeting, existingMeetings) {
+  const newStart = parseISO(newMeeting.datetime);
+  const newEnd = addMinutes(newStart, newMeeting.duration_minutes || 60);
+
+  const conflicts = existingMeetings.filter(meeting => {
+    if (meeting.id === newMeeting.id) return false; // Skip self when updating
+    
+    const existingStart = parseISO(meeting.datetime);
+    const existingEnd = addMinutes(existingStart, meeting.duration_minutes || 60);
+
+    // Check if meetings overlap
+    return (
+      (isWithinInterval(newStart, { start: existingStart, end: existingEnd })) ||
+      (isWithinInterval(newEnd, { start: existingStart, end: existingEnd })) ||
+      (isBefore(newStart, existingStart) && isAfter(newEnd, existingEnd))
+    );
+  });
+
+  return conflicts;
+}
+
+// Helper function to search meetings
+function searchMeetings(meetings, query) {
+  const lowerQuery = query.toLowerCase();
+  return meetings.filter(meeting => 
+    meeting.title.toLowerCase().includes(lowerQuery) ||
+    (meeting.notes && meeting.notes.toLowerCase().includes(lowerQuery))
+  );
+}
+
+// Helper function to delete a meeting
+async function removeMeeting(meetingId) {
+  try {
+    const result = await deleteMeeting(meetingId);
+    if (result.error) throw result.error;
+    return true;
+  } catch (error) {
+    console.error('Error deleting meeting:', error);
+    throw error;
+  }
+}
+
 // Helper function to check for scheduling conflicts
 function checkConflicts(newMeeting, existingMeetings) {
   const newStart = parseISO(newMeeting.datetime);
@@ -228,6 +271,32 @@ const tools = {
   update_meeting: async ({ meetingId, datetime }) => {
     const meeting = await modifyMeeting(meetingId, { datetime });
     return `Meeting "${meeting.title}" has been rescheduled successfully!`;
+  },
+  
+  delete_meeting: async ({ meetingId, meetingTitle }) => {
+    const meetings = await fetchMeetingsList();
+    let meeting = meetings.find(m => 
+      m.id === meetingId || 
+      (meetingTitle && m.title.toLowerCase().includes(meetingTitle.toLowerCase()))
+    );
+    
+    if (!meeting) {
+      return `I couldn't find that meeting. Please be more specific.`;
+    }
+    
+    await removeMeeting(meeting.id);
+    return `Meeting "${meeting.title}" has been cancelled successfully.`;
+  },
+  
+  search_meetings: async ({ query }) => {
+    const allMeetings = await fetchMeetingsList();
+    const results = searchMeetings(allMeetings, query);
+    
+    if (results.length === 0) {
+      return `No meetings found matching "${query}".`;
+    }
+    
+    return formatMeetingsForDisplay(results);
   },
 
   delete_meeting: async ({ meetingId }) => {
