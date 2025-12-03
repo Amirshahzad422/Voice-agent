@@ -1,37 +1,61 @@
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import MeetingCard from './MeetingCard';
 import './EnhancedVoiceAgent.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-const EnhancedVoiceAgent = ({ username }) => {
+const EnhancedVoiceAgent = ({ username, onShowHelp }) => {
+  // Core states
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('voice'); // voice, meetings, calendar, settings
-  const [meetings, setMeetings] = useState([]);
+  
+  // Feature states
   const [darkMode, setDarkMode] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showMeetings, setShowMeetings] = useState(true);
   const [continuousMode, setContinuousMode] = useState(false);
+  const [meetings, setMeetings] = useState([]);
+  const [selectedView, setSelectedView] = useState('conversation'); // conversation, meetings, calendar
+  
+  // Voice settings
   const [voiceSettings, setVoiceSettings] = useState({
     rate: 1.0,
     pitch: 1.0,
     volume: 1.0
   });
   
+  // References
   const recognitionRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
   const hasGreetedRef = useRef(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [checkingPermission, setCheckingPermission] = useState(false);
 
+  // Load preferences from localStorage
+  useEffect(() => {
+    const savedDarkMode = localStorage.getItem('voiceAgentDarkMode') === 'true';
+    const savedContinuousMode = localStorage.getItem('voiceAgentContinuousMode') === 'true';
+    const savedVoiceSettings = localStorage.getItem('voiceAgentVoiceSettings');
+    
+    setDarkMode(savedDarkMode);
+    setContinuousMode(savedContinuousMode);
+    if (savedVoiceSettings) {
+      setVoiceSettings(JSON.parse(savedVoiceSettings));
+    }
+    
+    if (savedDarkMode) {
+      document.documentElement.classList.add('dark-mode');
+    }
+  }, []);
+
   // Fetch meetings
   const fetchMeetings = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/meetings`);
-      setMeetings(response.data || []);
+      setMeetings(response.data);
     } catch (err) {
       console.error('Error fetching meetings:', err);
     }
@@ -42,15 +66,6 @@ const EnhancedVoiceAgent = ({ username }) => {
     const interval = setInterval(fetchMeetings, 30000); // Refresh every 30s
     return () => clearInterval(interval);
   }, []);
-
-  // Dark mode effect
-  useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark-mode');
-    } else {
-      document.documentElement.classList.remove('dark-mode');
-    }
-  }, [darkMode]);
 
   // Check microphone permission
   const checkMicrophonePermission = async () => {
@@ -63,18 +78,15 @@ const EnhancedVoiceAgent = ({ username }) => {
     }
   };
 
-  // Request microphone permission
   const requestMicrophonePermission = async () => {
     setCheckingPermission(true);
     setError(null);
-    
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setError('Microphone access requires HTTPS or localhost');
         setCheckingPermission(false);
         return false;
       }
-
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach(track => track.stop());
       setPermissionGranted(true);
@@ -82,23 +94,18 @@ const EnhancedVoiceAgent = ({ username }) => {
       setCheckingPermission(false);
       return true;
     } catch (err) {
-      console.error('Microphone permission error:', err);
       setPermissionGranted(false);
       setCheckingPermission(false);
-      setError('Microphone access denied. Please allow microphone access in browser settings.');
+      setError('Microphone access denied. Please allow microphone access.');
       return false;
     }
   };
 
-  // Check permission on mount
   useEffect(() => {
     const checkPermission = async () => {
       const permissionState = await checkMicrophonePermission();
       if (permissionState === 'granted') {
         setPermissionGranted(true);
-      } else if (permissionState === 'denied') {
-        setError('Microphone access blocked. Enable it in browser settings.');
-        setPermissionGranted(false);
       }
     };
     checkPermission();
@@ -114,7 +121,7 @@ const EnhancedVoiceAgent = ({ username }) => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     
-    recognition.continuous = continuousMode;
+    recognition.continuous = false;
     recognition.interimResults = false;
     recognition.lang = 'en-US';
 
@@ -124,7 +131,7 @@ const EnhancedVoiceAgent = ({ username }) => {
     };
 
     recognition.onresult = async (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript;
+      const transcript = event.results[0][0].transcript;
       setStatus('processing');
       
       const userMessage = { role: 'user', content: transcript };
@@ -151,25 +158,25 @@ const EnhancedVoiceAgent = ({ username }) => {
         });
 
         await speakText(agentResponse);
-        
-        // Refresh meetings after agent response
-        fetchMeetings();
+        await fetchMeetings(); // Refresh meetings after agent response
         
         setStatus('idle');
         
-        // Continue listening if continuous mode is on
-        if (continuousMode && recognitionRef.current) {
+        // Auto restart in continuous mode
+        if (continuousMode) {
           setTimeout(() => {
-            try {
-              recognitionRef.current?.start();
-            } catch (e) {
-              console.log('Already listening');
+            if (recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+              } catch (e) {
+                console.log('Recognition already started');
+              }
             }
           }, 1000);
         }
       } catch (err) {
         console.error('Error processing message:', err);
-        setError('Failed to process request. Please try again.');
+        setError('Failed to process your request.');
         setStatus('idle');
       }
     };
@@ -183,10 +190,10 @@ const EnhancedVoiceAgent = ({ username }) => {
         setError(null);
         if (continuousMode) {
           setTimeout(() => {
-            try {
-              recognitionRef.current?.start();
-            } catch (e) {
-              console.log('Already listening');
+            if (recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+              } catch (e) {}
             }
           }, 1000);
         }
@@ -194,14 +201,10 @@ const EnhancedVoiceAgent = ({ username }) => {
       }
       
       if (event.error === 'not-allowed') {
-        setError('Microphone access denied. Allow in browser settings.');
+        setError('Microphone access denied.');
         setPermissionGranted(false);
-      } else if (event.error === 'aborted') {
-        setError(null);
-      } else if (event.error === 'network') {
-        setError('Network error. Check internet connection.');
-      } else {
-        setError(`Speech recognition error: ${event.error}`);
+      } else if (event.error !== 'aborted') {
+        setError(`Recognition error: ${event.error}`);
       }
     };
 
@@ -215,7 +218,6 @@ const EnhancedVoiceAgent = ({ username }) => {
     recognitionRef.current = recognition;
   }, [conversationHistory, status, continuousMode]);
 
-  // Text-to-speech
   const speakText = (text) => {
     return new Promise((resolve) => {
       if (synthRef.current.speaking) {
@@ -223,6 +225,7 @@ const EnhancedVoiceAgent = ({ username }) => {
       }
 
       setIsSpeaking(true);
+      setStatus('speaking');
       const utterance = new SpeechSynthesisUtterance(text);
       
       utterance.rate = voiceSettings.rate;
@@ -231,11 +234,13 @@ const EnhancedVoiceAgent = ({ username }) => {
 
       utterance.onend = () => {
         setIsSpeaking(false);
+        setStatus('idle');
         resolve();
       };
 
       utterance.onerror = () => {
         setIsSpeaking(false);
+        setStatus('idle');
         resolve();
       };
 
@@ -243,7 +248,6 @@ const EnhancedVoiceAgent = ({ username }) => {
     });
   };
 
-  // Toggle listening
   const toggleListening = async () => {
     if (isSpeaking) {
       synthRef.current.cancel();
@@ -265,366 +269,445 @@ const EnhancedVoiceAgent = ({ username }) => {
       try {
         recognitionRef.current?.start();
       } catch (err) {
-        console.error('Error starting recognition:', err);
         setError('Could not start speech recognition.');
       }
     }
   };
 
-  // Stop speaking
-  const stopSpeaking = () => {
-    if (synthRef.current.speaking) {
-      synthRef.current.cancel();
-      setIsSpeaking(false);
-    }
-  };
-
-  // Delete meeting
-  const handleDeleteMeeting = async (meeting) => {
-    if (!confirm(`Delete "${meeting.title}"?`)) return;
+  const handleQuickAction = async (action) => {
+    const actions = {
+      'list': 'What meetings do I have?',
+      'today': 'What meetings do I have today?',
+      'schedule': 'Schedule a new meeting',
+      'clear': 'Clear conversation'
+    };
     
-    try {
-      await axios.delete(`${API_BASE_URL}/api/meetings/${meeting.id}`);
-      fetchMeetings();
-      speakText(`Meeting "${meeting.title}" has been deleted.`);
-    } catch (err) {
-      console.error('Error deleting meeting:', err);
-      setError('Failed to delete meeting.');
-    }
-  };
-
-  // Export meetings to ICS
-  const exportToICS = () => {
-    if (meetings.length === 0) {
-      alert('No meetings to export');
+    if (action === 'clear') {
+      setConversationHistory([]);
       return;
     }
+    
+    const message = actions[action];
+    if (message) {
+      const userMessage = { role: 'user', content: message };
+      let updatedHistory;
+      setConversationHistory(prev => {
+        updatedHistory = [...prev, userMessage];
+        return updatedHistory;
+      });
 
-    let icsContent = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Voice Meeting Agent//EN\n';
-    
-    meetings.forEach(meeting => {
-      const startDate = new Date(meeting.datetime);
-      const endDate = new Date(startDate.getTime() + meeting.duration_minutes * 60000);
-      
-      const formatICSDate = (date) => {
-        return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-      };
-      
-      icsContent += 'BEGIN:VEVENT\n';
-      icsContent += `UID:${meeting.id}@voicemeetingagent\n`;
-      icsContent += `DTSTAMP:${formatICSDate(new Date())}\n`;
-      icsContent += `DTSTART:${formatICSDate(startDate)}\n`;
-      icsContent += `DTEND:${formatICSDate(endDate)}\n`;
-      icsContent += `SUMMARY:${meeting.title}\n`;
-      if (meeting.notes) {
-        icsContent += `DESCRIPTION:${meeting.notes.replace(/\n/g, '\\n')}\n`;
+      try {
+        setStatus('processing');
+        const response = await axios.post(`${API_BASE_URL}/api/chat`, {
+          message,
+          conversationHistory: updatedHistory
+        });
+
+        const agentResponse = response.data.response;
+        setConversationHistory(prev => [...prev, { role: 'assistant', content: agentResponse }]);
+        await speakText(agentResponse);
+        await fetchMeetings();
+        setStatus('idle');
+      } catch (err) {
+        setError('Failed to process quick action.');
+        setStatus('idle');
       }
-      icsContent += 'END:VEVENT\n';
-    });
-    
-    icsContent += 'END:VCALENDAR';
-    
+    }
+  };
+
+  const toggleDarkMode = () => {
+    const newMode = !darkMode;
+    setDarkMode(newMode);
+    localStorage.setItem('voiceAgentDarkMode', newMode);
+    document.documentElement.classList.toggle('dark-mode');
+  };
+
+  const toggleContinuousMode = () => {
+    const newMode = !continuousMode;
+    setContinuousMode(newMode);
+    localStorage.setItem('voiceAgentContinuousMode', newMode);
+  };
+
+  const updateVoiceSettings = (key, value) => {
+    const newSettings = { ...voiceSettings, [key]: parseFloat(value) };
+    setVoiceSettings(newSettings);
+    localStorage.setItem('voiceAgentVoiceSettings', JSON.stringify(newSettings));
+  };
+
+  const exportMeetings = () => {
+    const icsContent = generateICS(meetings);
     const blob = new Blob([icsContent], { type: 'text/calendar' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'meetings.ics';
-    link.click();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'meetings.ics';
+    a.click();
     URL.revokeObjectURL(url);
   };
 
-  // Render different tabs
-  const renderContent = () => {
-    switch (activeTab) {
-      case 'voice':
-        return renderVoiceInterface();
-      case 'meetings':
-        return renderMeetingsView();
-      case 'calendar':
-        return renderCalendarView();
-      case 'settings':
-        return renderSettings();
-      default:
-        return renderVoiceInterface();
+  const generateICS = (meetings) => {
+    let ics = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Voice Agent//Meetings//EN\n';
+    meetings.forEach(meeting => {
+      const start = new Date(meeting.datetime).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      const end = new Date(new Date(meeting.datetime).getTime() + meeting.duration_minutes * 60000).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      ics += `BEGIN:VEVENT\nUID:${meeting.id}@voiceagent.com\nDTSTART:${start}\nDTEND:${end}\nSUMMARY:${meeting.title}\nDESCRIPTION:${meeting.notes || ''}\nEND:VEVENT\n`;
+    });
+    ics += 'END:VCALENDAR';
+    return ics;
+  };
+
+  const deleteMeeting = async (id) => {
+    if (confirm('Delete this meeting?')) {
+      try {
+        await axios.delete(`${API_BASE_URL}/api/meetings/${id}`);
+        await fetchMeetings();
+      } catch (err) {
+        setError('Failed to delete meeting.');
+      }
     }
   };
 
-  const renderVoiceInterface = () => (
-    <div className="voice-interface">
-      <div className="status-section">
-        <div className={`status-indicator ${status}`}>
-          <div className="status-dot"></div>
-          <span className="status-text">
-            {status === 'idle' && 'Ready to listen'}
-            {status === 'listening' && 'Listening...'}
-            {status === 'processing' && 'Processing...'}
-            {status === 'speaking' && 'Speaking...'}
-          </span>
-        </div>
-      </div>
+  const getMeetingStats = () => {
+    const total = meetings.length;
+    const today = meetings.filter(m => {
+      const meetingDate = new Date(m.datetime).toDateString();
+      return meetingDate === new Date().toDateString();
+    }).length;
+    const upcoming = meetings.filter(m => new Date(m.datetime) > new Date()).length;
+    return { total, today, upcoming };
+  };
 
-      {error && (
-        <div className="error-message">
-          <div className="error-content">
-            <strong>⚠️ {error}</strong>
-          </div>
-          <button onClick={() => setError(null)} className="error-close">×</button>
-        </div>
-      )}
-
-      <div className="controls">
-        {!permissionGranted && !isListening && (
-          <div className="permission-notice">
-            <p>🔒 Microphone access required</p>
-            <button 
-              className="permission-btn"
-              onClick={requestMicrophonePermission}
-              disabled={checkingPermission}
-            >
-              {checkingPermission ? 'Requesting...' : 'Grant Access'}
-            </button>
-          </div>
-        )}
-        
-        <button
-          className={`listen-btn ${isListening ? 'active' : ''}`}
-          onClick={toggleListening}
-          disabled={status === 'processing'}
-        >
-          {isListening ? (
-            <>
-              <span className="mic-icon">🎤</span>
-              Stop Listening
-            </>
-          ) : (
-            <>
-              <span className="mic-icon">🎤</span>
-              Start Listening
-            </>
-          )}
-        </button>
-
-        {isSpeaking && (
-          <button className="stop-btn" onClick={stopSpeaking}>
-            Stop Speaking
-          </button>
-        )}
-      </div>
-
-      <div className="conversation">
-        <h3>Conversation</h3>
-        <div className="conversation-messages">
-          {conversationHistory.length === 0 ? (
-            <p className="empty-state">Start speaking to begin...</p>
-          ) : (
-            conversationHistory.map((msg, index) => (
-              <div key={index} className={`message ${msg.role}`}>
-                <span className="message-role">
-                  {msg.role === 'user' ? 'You' : 'Agent'}
-                </span>
-                <span className="message-content">{msg.content}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderMeetingsView = () => (
-    <div className="meetings-view">
-      <div className="meetings-header">
-        <h2>Your Meetings ({meetings.length})</h2>
-        <button className="export-btn" onClick={exportToICS}>
-          📥 Export Calendar
-        </button>
-      </div>
-      
-      {meetings.length === 0 ? (
-        <div className="empty-meetings">
-          <span className="empty-icon">📅</span>
-          <p>No meetings scheduled</p>
-          <p className="empty-hint">Switch to Voice tab and say "Schedule a meeting"</p>
-        </div>
-      ) : (
-        <div className="meetings-grid">
-          {meetings.map((meeting) => (
-            <MeetingCard
-              key={meeting.id}
-              meeting={meeting}
-              onDelete={handleDeleteMeeting}
-              onEdit={(m) => console.log('Edit:', m)}
-              onReschedule={(m) => {
-                setActiveTab('voice');
-                speakText(`To reschedule ${m.title}, please tell me the new date and time.`);
-              }}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
-  const renderCalendarView = () => (
-    <div className="calendar-view">
-      <h2>Calendar View</h2>
-      <div className="calendar-placeholder">
-        <span className="calendar-icon">📆</span>
-        <p>Visual calendar coming soon!</p>
-        <p className="calendar-hint">For now, view your meetings in the Meetings tab</p>
-      </div>
-    </div>
-  );
-
-  const renderSettings = () => (
-    <div className="settings-view">
-      <h2>Settings</h2>
-      
-      <div className="setting-group">
-        <h3>Appearance</h3>
-        <div className="setting-item">
-          <label className="setting-label">
-            <span>Dark Mode</span>
-            <input
-              type="checkbox"
-              checked={darkMode}
-              onChange={(e) => setDarkMode(e.target.checked)}
-              className="setting-checkbox"
-            />
-          </label>
-        </div>
-      </div>
-
-      <div className="setting-group">
-        <h3>Voice Recognition</h3>
-        <div className="setting-item">
-          <label className="setting-label">
-            <span>Continuous Listening Mode</span>
-            <input
-              type="checkbox"
-              checked={continuousMode}
-              onChange={(e) => setContinuousMode(e.target.checked)}
-              className="setting-checkbox"
-            />
-          </label>
-          <p className="setting-description">
-            Keep listening after each response (experimental)
-          </p>
-        </div>
-      </div>
-
-      <div className="setting-group">
-        <h3>Voice Settings</h3>
-        <div className="setting-item">
-          <label className="setting-label">
-            <span>Speech Rate: {voiceSettings.rate.toFixed(1)}x</span>
-          </label>
-          <input
-            type="range"
-            min="0.5"
-            max="2"
-            step="0.1"
-            value={voiceSettings.rate}
-            onChange={(e) => setVoiceSettings({...voiceSettings, rate: parseFloat(e.target.value)})}
-            className="setting-slider"
-          />
-        </div>
-        
-        <div className="setting-item">
-          <label className="setting-label">
-            <span>Pitch: {voiceSettings.pitch.toFixed(1)}</span>
-          </label>
-          <input
-            type="range"
-            min="0.5"
-            max="2"
-            step="0.1"
-            value={voiceSettings.pitch}
-            onChange={(e) => setVoiceSettings({...voiceSettings, pitch: parseFloat(e.target.value)})}
-            className="setting-slider"
-          />
-        </div>
-        
-        <div className="setting-item">
-          <label className="setting-label">
-            <span>Volume: {Math.round(voiceSettings.volume * 100)}%</span>
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.1"
-            value={voiceSettings.volume}
-            onChange={(e) => setVoiceSettings({...voiceSettings, volume: parseFloat(e.target.value)})}
-            className="setting-slider"
-          />
-        </div>
-
-        <button 
-          className="test-voice-btn"
-          onClick={() => speakText('Hello! This is a test of the voice settings.')}
-        >
-          🔊 Test Voice
-        </button>
-      </div>
-    </div>
-  );
+  const stats = getMeetingStats();
 
   return (
-    <div className="enhanced-voice-agent-container">
-      <div className="enhanced-voice-agent-card">
-        <div className="header">
-          <div className="header-content">
-            <h1>Voice Meeting Agent</h1>
-            <p className="username">Hello, {username}! 👋</p>
+    <div className={`enhanced-voice-agent ${darkMode ? 'dark' : ''}`}>
+      {/* Top Bar */}
+      <div className="top-bar">
+        <div className="top-bar-left">
+          <h1>🎙️ Voice Agent</h1>
+          <span className="username-badge">👤 {username}</span>
+        </div>
+        <div className="top-bar-right">
+          <button className="icon-btn" onClick={() => setShowSettings(!showSettings)} title="Settings">
+            ⚙️
+          </button>
+          <button className="icon-btn" onClick={toggleDarkMode} title="Toggle Dark Mode">
+            {darkMode ? '☀️' : '🌙'}
+          </button>
+          <button className="icon-btn" onClick={onShowHelp} title="Help">
+            ❓
+          </button>
+        </div>
+      </div>
+
+      <div className="main-container">
+        {/* Sidebar */}
+        <div className="sidebar">
+          <div className="stats-cards">
+            <div className="stat-card">
+              <span className="stat-icon">📊</span>
+              <div>
+                <div className="stat-value">{stats.total}</div>
+                <div className="stat-label">Total</div>
+              </div>
+            </div>
+            <div className="stat-card">
+              <span className="stat-icon">📅</span>
+              <div>
+                <div className="stat-value">{stats.today}</div>
+                <div className="stat-label">Today</div>
+              </div>
+            </div>
+            <div className="stat-card">
+              <span className="stat-icon">⏰</span>
+              <div>
+                <div className="stat-value">{stats.upcoming}</div>
+                <div className="stat-label">Upcoming</div>
+              </div>
+            </div>
           </div>
-          <div className="header-actions">
-            <div className="stats">
-              <span className="stat-item">
-                📅 {meetings.length} {meetings.length === 1 ? 'Meeting' : 'Meetings'}
-              </span>
+
+          <div className="nav-tabs">
+            <button 
+              className={`nav-tab ${selectedView === 'conversation' ? 'active' : ''}`}
+              onClick={() => setSelectedView('conversation')}
+            >
+              <span>💬</span> Chat
+            </button>
+            <button 
+              className={`nav-tab ${selectedView === 'meetings' ? 'active' : ''}`}
+              onClick={() => setSelectedView('meetings')}
+            >
+              <span>📋</span> Meetings
+            </button>
+          </div>
+
+          <div className="quick-actions">
+            <h3>Quick Actions</h3>
+            <button className="quick-action-btn" onClick={() => handleQuickAction('list')}>
+              📋 List All
+            </button>
+            <button className="quick-action-btn" onClick={() => handleQuickAction('today')}>
+              📅 Today's Meetings
+            </button>
+            <button className="quick-action-btn" onClick={() => handleQuickAction('schedule')}>
+              ➕ Schedule New
+            </button>
+            <button className="quick-action-btn" onClick={exportMeetings} disabled={meetings.length === 0}>
+              📥 Export Calendar
+            </button>
+            <button className="quick-action-btn danger" onClick={() => handleQuickAction('clear')}>
+              🗑️ Clear Chat
+            </button>
+          </div>
+        </div>
+
+        {/* Main Content */}
+        <div className="main-content">
+          {/* Voice Control Panel */}
+          <div className="voice-control-panel">
+            <div className="status-display">
+              <div className={`status-indicator-enhanced ${status}`}>
+                <div className="status-dot-enhanced"></div>
+                <span className="status-text-enhanced">
+                  {status === 'idle' && '🟢 Ready'}
+                  {status === 'listening' && '🔴 Listening...'}
+                  {status === 'processing' && '🔄 Processing...'}
+                  {status === 'speaking' && '🔊 Speaking...'}
+                </span>
+              </div>
+              {continuousMode && (
+                <span className="continuous-badge">🔄 Continuous Mode</span>
+              )}
+            </div>
+
+            {error && (
+              <div className="error-banner">
+                <span>⚠️ {error}</span>
+                <button onClick={() => setError(null)}>×</button>
+              </div>
+            )}
+
+            <div className="voice-controls">
+              {!permissionGranted && !isListening ? (
+                <button className="permission-btn-enhanced" onClick={requestMicrophonePermission} disabled={checkingPermission}>
+                  {checkingPermission ? '⏳ Requesting...' : '🔒 Grant Microphone Access'}
+                </button>
+              ) : (
+                <>
+                  <button
+                    className={`voice-btn-main ${isListening ? 'listening' : ''}`}
+                    onClick={toggleListening}
+                    disabled={status === 'processing'}
+                  >
+                    <span className="mic-icon-large">{isListening ? '🎤' : '🎙️'}</span>
+                    <span className="btn-text">{isListening ? 'Stop Listening' : 'Start Listening'}</span>
+                  </button>
+                  
+                  {isSpeaking && (
+                    <button className="voice-btn-stop" onClick={() => synthRef.current.cancel()}>
+                      🛑 Stop Speaking
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Content Area */}
+          {selectedView === 'conversation' && (
+            <div className="conversation-panel">
+              <h2>💬 Conversation</h2>
+              <div className="messages-container">
+                {conversationHistory.length === 0 ? (
+                  <div className="empty-state-enhanced">
+                    <span className="empty-icon">🎤</span>
+                    <p>Click "Start Listening" and speak naturally</p>
+                    <p className="empty-hint">Try: "Schedule a meeting" or "What meetings do I have?"</p>
+                  </div>
+                ) : (
+                  conversationHistory.map((msg, index) => (
+                    <div key={index} className={`message-enhanced ${msg.role}`}>
+                      <div className="message-avatar">
+                        {msg.role === 'user' ? '👤' : '🤖'}
+                      </div>
+                      <div className="message-bubble">
+                        <div className="message-role-enhanced">
+                          {msg.role === 'user' ? 'You' : 'Assistant'}
+                        </div>
+                        <div className="message-content-enhanced">{msg.content}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {selectedView === 'meetings' && (
+            <div className="meetings-panel">
+              <div className="meetings-header">
+                <h2>📋 Your Meetings</h2>
+                <button className="refresh-btn" onClick={fetchMeetings}>
+                  🔄 Refresh
+                </button>
+              </div>
+              <div className="meetings-grid">
+                {meetings.length === 0 ? (
+                  <div className="empty-state-enhanced">
+                    <span className="empty-icon">📅</span>
+                    <p>No meetings scheduled</p>
+                    <p className="empty-hint">Say "Schedule a meeting" to create one</p>
+                  </div>
+                ) : (
+                  meetings.map(meeting => (
+                    <div key={meeting.id} className="meeting-card">
+                      <div className="meeting-card-header">
+                        <h3>{meeting.title}</h3>
+                        <button className="delete-btn" onClick={() => deleteMeeting(meeting.id)}>
+                          🗑️
+                        </button>
+                      </div>
+                      <div className="meeting-card-body">
+                        <div className="meeting-detail">
+                          <span className="detail-icon">📅</span>
+                          <span>{new Date(meeting.datetime).toLocaleDateString()}</span>
+                        </div>
+                        <div className="meeting-detail">
+                          <span className="detail-icon">⏰</span>
+                          <span>{new Date(meeting.datetime).toLocaleTimeString()}</span>
+                        </div>
+                        <div className="meeting-detail">
+                          <span className="detail-icon">⏱️</span>
+                          <span>{meeting.duration_minutes} minutes</span>
+                        </div>
+                        {meeting.notes && (
+                          <div className="meeting-notes">
+                            <span className="detail-icon">📝</span>
+                            <span>{meeting.notes}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
+          <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-header">
+              <h2>⚙️ Settings</h2>
+              <button className="close-btn" onClick={() => setShowSettings(false)}>×</button>
+            </div>
+            
+            <div className="settings-content">
+              <div className="setting-group">
+                <h3>🎚️ Voice Settings</h3>
+                
+                <div className="setting-item">
+                  <label>
+                    <span>Speed</span>
+                    <span className="setting-value">{voiceSettings.rate.toFixed(1)}x</span>
+                  </label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.1"
+                    value={voiceSettings.rate}
+                    onChange={(e) => updateVoiceSettings('rate', e.target.value)}
+                    className="slider"
+                  />
+                </div>
+
+                <div className="setting-item">
+                  <label>
+                    <span>Pitch</span>
+                    <span className="setting-value">{voiceSettings.pitch.toFixed(1)}</span>
+                  </label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.1"
+                    value={voiceSettings.pitch}
+                    onChange={(e) => updateVoiceSettings('pitch', e.target.value)}
+                    className="slider"
+                  />
+                </div>
+
+                <div className="setting-item">
+                  <label>
+                    <span>Volume</span>
+                    <span className="setting-value">{Math.round(voiceSettings.volume * 100)}%</span>
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    value={voiceSettings.volume}
+                    onChange={(e) => updateVoiceSettings('volume', e.target.value)}
+                    className="slider"
+                  />
+                </div>
+              </div>
+
+              <div className="setting-group">
+                <h3>🎛️ Options</h3>
+                
+                <div className="setting-toggle">
+                  <div>
+                    <div className="toggle-label">Continuous Listening Mode</div>
+                    <div className="toggle-description">Auto-restart after each interaction</div>
+                  </div>
+                  <label className="toggle-switch">
+                    <input type="checkbox" checked={continuousMode} onChange={toggleContinuousMode} />
+                    <span className="toggle-slider"></span>
+                  </label>
+                </div>
+
+                <div className="setting-toggle">
+                  <div>
+                    <div className="toggle-label">Dark Mode</div>
+                    <div className="toggle-description">Use dark theme</div>
+                  </div>
+                  <label className="toggle-switch">
+                    <input type="checkbox" checked={darkMode} onChange={toggleDarkMode} />
+                    <span className="toggle-slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="setting-group">
+                <h3>ℹ️ Information</h3>
+                <div className="info-grid">
+                  <div className="info-item">
+                    <span>Browser</span>
+                    <span>{navigator.userAgent.includes('Chrome') ? 'Chrome ✓' : 'Other'}</span>
+                  </div>
+                  <div className="info-item">
+                    <span>Microphone</span>
+                    <span>{permissionGranted ? 'Granted ✓' : 'Not granted'}</span>
+                  </div>
+                  <div className="info-item">
+                    <span>Total Meetings</span>
+                    <span>{meetings.length}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-
-        <div className="tabs">
-          <button
-            className={`tab ${activeTab === 'voice' ? 'active' : ''}`}
-            onClick={() => setActiveTab('voice')}
-          >
-            <span className="tab-icon">🎤</span>
-            Voice
-          </button>
-          <button
-            className={`tab ${activeTab === 'meetings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('meetings')}
-          >
-            <span className="tab-icon">📋</span>
-            Meetings
-          </button>
-          <button
-            className={`tab ${activeTab === 'calendar' ? 'active' : ''}`}
-            onClick={() => setActiveTab('calendar')}
-          >
-            <span className="tab-icon">📆</span>
-            Calendar
-          </button>
-          <button
-            className={`tab ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}
-          >
-            <span className="tab-icon">⚙️</span>
-            Settings
-          </button>
-        </div>
-
-        <div className="tab-content">
-          {renderContent()}
-        </div>
-      </div>
+      )}
     </div>
   );
 };
 
 export default EnhancedVoiceAgent;
-
