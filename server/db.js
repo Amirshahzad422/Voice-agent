@@ -26,7 +26,14 @@ export const mockDb = {
     const newMeeting = {
       id: Date.now().toString(),
       ...meeting,
-      created_at: new Date().toISOString()
+      participants: meeting.participants || [],
+      category: meeting.category || 'other',
+      location: meeting.location || null,
+      reminder_minutes: meeting.reminder_minutes || 15,
+      is_recurring: meeting.is_recurring || false,
+      recurrence_pattern: meeting.recurrence_pattern || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
     mockMeetings.push(newMeeting);
     return { data: newMeeting, error: null };
@@ -37,7 +44,11 @@ export const mockDb = {
     if (index === -1) {
       return { data: null, error: { message: 'Meeting not found' } };
     }
-    mockMeetings[index] = { ...mockMeetings[index], ...updates };
+    mockMeetings[index] = { 
+      ...mockMeetings[index], 
+      ...updates,
+      updated_at: new Date().toISOString()
+    };
     return { data: mockMeetings[index], error: null };
   },
 

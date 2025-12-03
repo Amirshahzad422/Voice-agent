@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import VoiceAgent from './components/VoiceAgent';
+import EnhancedVoiceAgent from './components/EnhancedVoiceAgent';
 import './App.css';
 
 function App() {
@@ -26,11 +26,28 @@ function App() {
     return (
       <div className="name-input-container">
         <div className="name-input-card">
-          <h1>Welcome to Voice Meeting Agent</h1>
-          <p>Please enter your name to get started</p>
+          <span className="welcome-icon">🎙️</span>
+          <h1>Voice Meeting Agent</h1>
+          <p>Your AI-powered voice assistant for effortless meeting management</p>
+          
+          <div className="feature-highlights">
+            <div className="feature-item">
+              <span className="feature-icon">🗓️</span>
+              <span className="feature-text">Schedule Meetings</span>
+            </div>
+            <div className="feature-item">
+              <span className="feature-icon">📋</span>
+              <span className="feature-text">View Calendar</span>
+            </div>
+            <div className="feature-item">
+              <span className="feature-icon">🔄</span>
+              <span className="feature-text">Reschedule</span>
+            </div>
+          </div>
+
           <input
             type="text"
-            placeholder="Enter your name"
+            placeholder="Enter your name (e.g., John Doe)"
             onKeyPress={(e) => {
               if (e.key === 'Enter') {
                 handleNameSubmit(e.target.value);
@@ -39,18 +56,30 @@ function App() {
             autoFocus
             className="name-input"
           />
+          
+          <div className="input-helper">
+            Your name will be saved locally for future visits
+          </div>
+
           <button
             onClick={() => handleNameSubmit(document.querySelector('.name-input').value)}
             className="name-submit-btn"
           >
-            Start
+            <span>🚀 Get Started</span>
           </button>
+
+          <div className="app-info">
+            <p>💬 Speak naturally to schedule, view, and manage your meetings</p>
+            <div className="browser-badge">
+              Best on Chrome & Edge
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
-  return <VoiceAgent username={username} />;
+  return <EnhancedVoiceAgent username={username} />;
 }
 
 export default App;

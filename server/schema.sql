@@ -7,7 +7,14 @@ CREATE TABLE IF NOT EXISTS meetings (
   datetime TIMESTAMPTZ NOT NULL,
   duration_minutes INTEGER NOT NULL,
   notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  participants TEXT[], -- Array of participant names/emails
+  category TEXT CHECK (category IN ('work', 'personal', 'urgent', 'other')),
+  location TEXT, -- Meeting location or virtual link
+  reminder_minutes INTEGER DEFAULT 15, -- Minutes before meeting to remind
+  is_recurring BOOLEAN DEFAULT FALSE,
+  recurrence_pattern TEXT, -- daily, weekly, monthly, etc.
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Create index for faster queries

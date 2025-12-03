@@ -4,11 +4,28 @@ A fully functional voice-only meeting scheduling agent prototype. Users interact
 
 ## Features
 
+### Core Voice Features
 - 🎤 **Voice-only interface** - Speak naturally to interact
-- 📅 **Schedule meetings** - Conversational meeting creation
+- 📅 **Schedule meetings** - Conversational meeting creation with conflict detection
 - 📋 **List meetings** - Hear your upcoming meetings
 - 🔄 **Reschedule meetings** - Move meetings with voice commands
+- 🗑️ **Delete meetings** - Cancel meetings by voice
+- 🔍 **Search meetings** - Find specific meetings by title or notes
 - 🤖 **AI-powered** - Uses LangChain with OpenAI for natural conversations
+
+### Enhanced UI Features
+- 📊 **Visual Meeting Cards** - Beautiful card-based meeting display
+- 📆 **Calendar View** - Visual representation of your schedule
+- 🌙 **Dark Mode** - Easy on the eyes during late hours
+- ⚙️ **Settings Panel** - Customize your experience
+- 📥 **Export to ICS** - Export meetings to any calendar app
+
+### Advanced Features
+- 🔁 **Continuous Listening Mode** - Keep the mic active for hands-free operation
+- 🎛️ **Voice Settings** - Adjust speech rate, pitch, and volume
+- ⚠️ **Conflict Detection** - Warns about scheduling conflicts
+- 👥 **Meeting Participants** - Track who's attending (schema ready)
+- 🏷️ **Categories** - Organize meetings (work, personal, urgent)
 
 ## Tech Stack
 
@@ -95,11 +112,89 @@ npm run dev:client
 
 1. **Open the app** in your browser (Chrome or Edge recommended for best speech recognition support)
 2. **Enter your name** on first load (saved in localStorage)
-3. **Click "Start Listening"** or wait for the greeting
-4. **Speak naturally**:
+3. **Explore the tabs**:
+   - **Voice Tab**: Main voice interaction interface
+   - **Meetings Tab**: Visual cards of all your meetings
+   - **Calendar Tab**: Calendar view (coming soon)
+   - **Settings Tab**: Customize voice and appearance
+4. **Grant microphone access** when prompted
+5. **Click "Start Listening"** and speak naturally:
    - "Schedule a meeting"
    - "What meetings do I have?"
    - "Reschedule the Q4 planning to next week"
+   - "Delete the standup meeting"
+   - "Find meetings about budget"
+
+### Voice Commands
+
+#### Scheduling
+- "Schedule a meeting"
+- "Set up a meeting"
+- "Create a new meeting"
+
+#### Viewing
+- "What meetings do I have?"
+- "Show my calendar"
+- "List my meetings"
+
+#### Modifying
+- "Reschedule [meeting name] to [new time]"
+- "Move the [meeting name] to next week"
+
+#### Deleting
+- "Delete the [meeting name]"
+- "Cancel my [meeting name]"
+- "Remove the [meeting name]"
+
+#### Searching
+- "Find meetings about [topic]"
+- "Search for [meeting name]"
+
+## UI Features
+
+### Tabs Navigation
+The app now features a modern tabbed interface:
+
+1. **Voice Tab** 🎤
+   - Main voice interaction interface
+   - Real-time status indicator
+   - Conversation history
+   - Microphone controls
+   - Voice feedback
+
+2. **Meetings Tab** 📋
+   - Visual meeting cards with actions
+   - Edit, reschedule, or delete meetings with one click
+   - Export all meetings to ICS format
+   - Past meetings shown with reduced opacity
+   - Meeting details: time, duration, notes, participants
+
+3. **Calendar Tab** 📆
+   - Visual calendar representation (coming soon)
+   - Month/week/day views
+
+4. **Settings Tab** ⚙️
+   - **Dark Mode**: Toggle between light and dark themes
+   - **Continuous Listening**: Keep mic active for hands-free operation
+   - **Voice Settings**:
+     - Speech Rate: 0.5x to 2x
+     - Pitch: 0.5 to 2.0
+     - Volume: 0% to 100%
+   - Test voice button
+
+### Meeting Cards
+Each meeting is displayed as a beautiful card showing:
+- Day of week and date
+- Time and duration
+- Meeting title and notes
+- Participants (if any)
+- Category badge (work, personal, urgent)
+- Quick action buttons (reschedule, edit, delete)
+
+### Export Functionality
+- Export all meetings to ICS (iCalendar) format
+- Import into Google Calendar, Outlook, Apple Calendar, etc.
+- One-click download
 
 ## User Flows
 
@@ -127,6 +222,30 @@ npm run dev:client
 3. Agent confirms new time
 4. Meeting updated in database
 
+### Flow 4: Delete Meeting
+
+1. User: "Delete the standup meeting" or "Cancel the Q4 planning"
+2. Agent identifies the meeting
+3. Agent confirms deletion
+4. Meeting removed from database
+
+### Flow 5: Search Meetings
+
+1. User: "Find meetings about budget" or "Search for team sync"
+2. Agent searches through meeting titles and notes
+3. Agent reads matching meetings
+4. User can take action on found meetings
+
+### Flow 6: Visual Management
+
+1. User switches to "Meetings" tab
+2. Views all meetings as visual cards
+3. Clicks action buttons to:
+   - Reschedule (switches to voice tab with prompt)
+   - Edit meeting details
+   - Delete meeting
+4. Export meetings to calendar app
+
 ## Project Structure
 
 ```
@@ -151,13 +270,34 @@ voice-meeting-agent/
 
 ```json
 {
+  "id": "uuid-here",
   "title": "Q4 Planning",
   "datetime": "2025-12-05T15:00:00+05:30",
   "duration_minutes": 60,
   "notes": "Discuss budget and roadmap",
-  "created_at": "2025-11-21T10:00:00Z"
+  "participants": ["john@example.com", "sarah@example.com"],
+  "category": "work",
+  "location": "Conference Room A",
+  "reminder_minutes": 15,
+  "is_recurring": false,
+  "recurrence_pattern": null,
+  "created_at": "2025-11-21T10:00:00Z",
+  "updated_at": "2025-11-21T10:00:00Z"
 }
 ```
+
+### Field Descriptions
+
+- `title`: Meeting title/subject
+- `datetime`: ISO 8601 datetime with timezone
+- `duration_minutes`: Duration in minutes
+- `notes`: Optional meeting notes/description
+- `participants`: Array of participant names/emails
+- `category`: One of: work, personal, urgent, other
+- `location`: Physical location or virtual meeting link
+- `reminder_minutes`: Minutes before meeting to send reminder
+- `is_recurring`: Boolean for recurring meetings
+- `recurrence_pattern`: Pattern like "daily", "weekly", "monthly"
 
 ## Browser Compatibility
 

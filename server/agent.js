@@ -2,8 +2,8 @@ import { ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
 import { RunnableSequence } from '@langchain/core/runnables';
 import { StringOutputParser } from '@langchain/core/output_parsers';
-import { getMeetings, createMeeting, updateMeeting } from './db.js';
-import { format, parseISO } from 'date-fns';
+import { getMeetings, createMeeting, updateMeeting, deleteMeeting } from './db.js';
+import { format, parseISO, isWithinInterval, addMinutes, isBefore, isAfter } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 
 const llm = new ChatOpenAI({
@@ -54,6 +54,47 @@ async function modifyMeeting(meetingId, updates) {
   }
 }
 
+// Helper function to delete a meeting
+async function removeMeeting(meetingId) {
+  try {
+    const result = await deleteMeeting(meetingId);
+    if (result.error) throw result.error;
+    return true;
+  } catch (error) {
+    console.error('Error deleting meeting:', error);
+    throw error;
+  }
+}
+
+// Helper function to check for meeting conflicts
+function checkMeetingConflict(newMeeting, existingMeetings) {
+  const newStart = parseISO(newMeeting.datetime);
+  const newEnd = addMinutes(newStart, newMeeting.duration_minutes);
+
+  const conflicts = existingMeetings.filter(existing => {
+    const existingStart = parseISO(existing.datetime);
+    const existingEnd = addMinutes(existingStart, existing.duration_minutes);
+
+    // Check if meetings overlap
+    return (
+      (isWithinInterval(newStart, { start: existingStart, end: existingEnd })) ||
+      (isWithinInterval(newEnd, { start: existingStart, end: existingEnd })) ||
+      (isBefore(newStart, existingStart) && isAfter(newEnd, existingEnd))
+    );
+  });
+
+  return conflicts;
+}
+
+// Helper function to search meetings
+function searchMeetings(meetings, query) {
+  const lowerQuery = query.toLowerCase();
+  return meetings.filter(meeting => 
+    meeting.title.toLowerCase().includes(lowerQuery) ||
+    (meeting.notes && meeting.notes.toLowerCase().includes(lowerQuery))
+  );
+}
+
 // Format meetings for display
 function formatMeetingsForDisplay(meetings) {
   if (!meetings || meetings.length === 0) {
@@ -80,6 +121,9 @@ Your capabilities:
 1. Schedule new meetings by collecting: title, date & time (IST timezone), duration, and optional notes
 2. List upcoming meetings in a natural, readable format
 3. Reschedule existing meetings by identifying them and updating the datetime
+4. Delete/cancel meetings by voice command
+5. Search for specific meetings
+6. Check for scheduling conflicts and warn users
 
 Important rules:
 - Always speak naturally and conversationally
@@ -90,13 +134,17 @@ Important rules:
 - Be concise but friendly
 - If user says "yes" or confirms, proceed with the action
 - If user says "no" or corrects something, ask for the correction
+- ALWAYS check for conflicts before scheduling a new meeting
+- If a conflict exists, inform the user and ask if they want to proceed anyway
 
 Current conversation state will be provided to you. Use it to track what information you've collected.
 
 When you need to:
 - LIST meetings: Call the list_meetings function
-- CREATE a meeting: Call the create_meeting function with all required fields
+- CREATE a meeting: Call the create_meeting function with all required fields (checks conflicts automatically)
 - UPDATE a meeting: Call the update_meeting function with the meeting ID and new datetime
+- DELETE a meeting: Call the delete_meeting function with the meeting ID or title
+- SEARCH meetings: Call the search_meetings function with the search query
 
 Always respond in a natural, conversational voice that sounds good when spoken aloud.`;
 
@@ -115,6 +163,18 @@ const tools = {
   },
   
   create_meeting: async ({ title, datetime, duration_minutes, notes }) => {
+    // Check for conflicts first
+    const existingMeetings = await fetchMeetingsList();
+    const conflicts = checkMeetingConflict(
+      { datetime, duration_minutes: parseInt(duration_minutes) },
+      existingMeetings
+    );
+
+    if (conflicts.length > 0) {
+      const conflictTitles = conflicts.map(m => m.title).join(', ');
+      return `Warning: This meeting conflicts with: ${conflictTitles}. Would you still like to schedule it?`;
+    }
+
     const meeting = await saveMeeting({
       title,
       datetime,
@@ -127,6 +187,32 @@ const tools = {
   update_meeting: async ({ meetingId, datetime }) => {
     const meeting = await modifyMeeting(meetingId, { datetime });
     return `Meeting "${meeting.title}" has been rescheduled successfully!`;
+  },
+
+  delete_meeting: async ({ meetingId }) => {
+    const meetings = await fetchMeetingsList();
+    const meeting = meetings.find(m => 
+      m.id === meetingId || 
+      m.title.toLowerCase().includes(meetingId.toLowerCase())
+    );
+
+    if (!meeting) {
+      return `I couldn't find a meeting matching "${meetingId}". Please try again.`;
+    }
+
+    await removeMeeting(meeting.id);
+    return `Meeting "${meeting.title}" has been deleted successfully!`;
+  },
+
+  search_meetings: async ({ query }) => {
+    const meetings = await fetchMeetingsList();
+    const results = searchMeetings(meetings, query);
+
+    if (results.length === 0) {
+      return `No meetings found matching "${query}".`;
+    }
+
+    return formatMeetingsForDisplay(results);
   }
 };
 
@@ -213,6 +299,85 @@ Or respond naturally asking for missing information.`;
         return {
           output: responseText,
           conversationState: { collecting: 'meeting' }
+        };
+      }
+
+      // Check if user wants to delete/cancel a meeting
+      if (lowerInput.includes('delete') || lowerInput.includes('cancel') || 
+          lowerInput.includes('remove')) {
+        const deletePrompt = `User wants to delete/cancel a meeting. Current meetings:
+${JSON.stringify(meetings, null, 2)}
+
+User said: ${input}
+
+Identify which meeting to delete. Respond with JSON:
+{
+  "action": "delete",
+  "meetingId": "id or title"
+}
+
+Or ask for clarification if unclear.`;
+
+        const deleteResponse = await llm.invoke(deletePrompt);
+        const responseText = deleteResponse.content;
+
+        try {
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const deleteData = JSON.parse(jsonMatch[0]);
+            if (deleteData.action === 'delete') {
+              const result = await tools.delete_meeting({ meetingId: deleteData.meetingId });
+              return {
+                output: result,
+                conversationState: {}
+              };
+            }
+          }
+        } catch (e) {
+          // Not JSON, continue with natural response
+        }
+
+        return {
+          output: responseText,
+          conversationState: { collecting: 'delete' }
+        };
+      }
+
+      // Check if user wants to search meetings
+      if (lowerInput.includes('find') || lowerInput.includes('search') || 
+          lowerInput.includes('look for')) {
+        const searchPrompt = `User wants to search for meetings. 
+
+User said: ${input}
+
+Extract the search query from the user's input. Respond with JSON:
+{
+  "action": "search",
+  "query": "search terms"
+}`;
+
+        const searchResponse = await llm.invoke(searchPrompt);
+        const responseText = searchResponse.content;
+
+        try {
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const searchData = JSON.parse(jsonMatch[0]);
+            if (searchData.action === 'search') {
+              const result = await tools.search_meetings({ query: searchData.query });
+              return {
+                output: result,
+                conversationState: {}
+              };
+            }
+          }
+        } catch (e) {
+          // Not JSON, continue with natural response
+        }
+
+        return {
+          output: responseText,
+          conversationState: { collecting: 'search' }
         };
       }
 
