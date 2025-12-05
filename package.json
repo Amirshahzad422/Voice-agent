@@ -7,6 +7,10 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
+    "build": "cd client && npm run build",
+    "build:client": "cd client && npm run build",
+    "preview": "cd client && npm run preview",
+    "start": "cd server && npm start",
     "install:all": "npm install && cd server && npm install && cd ../client && npm install"
   },
   "keywords": ["voice-agent", "meeting-scheduler"],
