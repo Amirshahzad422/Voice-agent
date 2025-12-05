@@ -66,28 +66,6 @@ async function removeMeeting(meetingId) {
   }
 }
 
-// Helper function to check for meeting conflicts
-function checkMeetingConflicts(newMeeting, existingMeetings) {
-  const newStart = parseISO(newMeeting.datetime);
-  const newEnd = addMinutes(newStart, newMeeting.duration_minutes || 60);
-
-  const conflicts = existingMeetings.filter(meeting => {
-    if (meeting.id === newMeeting.id) return false; // Skip self when updating
-    
-    const existingStart = parseISO(meeting.datetime);
-    const existingEnd = addMinutes(existingStart, meeting.duration_minutes || 60);
-
-    // Check if meetings overlap
-    return (
-      (isWithinInterval(newStart, { start: existingStart, end: existingEnd })) ||
-      (isWithinInterval(newEnd, { start: existingStart, end: existingEnd })) ||
-      (isBefore(newStart, existingStart) && isAfter(newEnd, existingEnd))
-    );
-  });
-
-  return conflicts;
-}
-
 // Helper function to search meetings
 function searchMeetings(meetings, query) {
   const lowerQuery = query.toLowerCase();
@@ -95,59 +73,6 @@ function searchMeetings(meetings, query) {
     meeting.title.toLowerCase().includes(lowerQuery) ||
     (meeting.notes && meeting.notes.toLowerCase().includes(lowerQuery))
   );
-}
-
-// Helper function to delete a meeting
-async function removeMeeting(meetingId) {
-  try {
-    const result = await deleteMeeting(meetingId);
-    if (result.error) throw result.error;
-    return true;
-  } catch (error) {
-    console.error('Error deleting meeting:', error);
-    throw error;
-  }
-}
-
-// Helper function to check for scheduling conflicts
-function checkConflicts(newMeeting, existingMeetings) {
-  const newStart = parseISO(newMeeting.datetime);
-  const newEnd = addMinutes(newStart, newMeeting.duration_minutes);
-  
-  const conflicts = existingMeetings.filter(meeting => {
-    const meetingStart = parseISO(meeting.datetime);
-    const meetingEnd = addMinutes(meetingStart, meeting.duration_minutes);
-    
-    // Check if there's any overlap
-    return (
-      (isAfter(newStart, meetingStart) || newStart.getTime() === meetingStart.getTime()) && isBefore(newStart, meetingEnd) ||
-      (isAfter(newEnd, meetingStart) && (isBefore(newEnd, meetingEnd) || newEnd.getTime() === meetingEnd.getTime())) ||
-      (isBefore(newStart, meetingStart) && isAfter(newEnd, meetingEnd))
-    );
-  });
-  
-  return conflicts;
-}
-
-// Helper function to search meetings
-function searchMeetings(meetings, query) {
-  const lowerQuery = query.toLowerCase();
-  return meetings.filter(meeting => 
-    meeting.title.toLowerCase().includes(lowerQuery) ||
-    (meeting.notes && meeting.notes.toLowerCase().includes(lowerQuery))
-  );
-}
-
-// Helper function to delete a meeting
-async function removeMeeting(meetingId) {
-  try {
-    const result = await deleteMeeting(meetingId);
-    if (result.error) throw result.error;
-    return true;
-  } catch (error) {
-    console.error('Error deleting meeting:', error);
-    throw error;
-  }
 }
 
 // Helper function to check for meeting conflicts
