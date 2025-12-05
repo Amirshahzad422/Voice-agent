@@ -95,15 +95,6 @@ function checkMeetingConflict(newMeeting, existingMeetings) {
   return conflicts;
 }
 
-// Helper function to search meetings
-function searchMeetings(meetings, query) {
-  const lowerQuery = query.toLowerCase();
-  return meetings.filter(meeting => 
-    meeting.title.toLowerCase().includes(lowerQuery) ||
-    (meeting.notes && meeting.notes.toLowerCase().includes(lowerQuery))
-  );
-}
-
 // Format meetings for display
 function formatMeetingsForDisplay(meetings) {
   if (!meetings || meetings.length === 0) {
