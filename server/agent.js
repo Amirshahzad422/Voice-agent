@@ -69,8 +69,8 @@ async function removeMeeting(meetingId) {
 // Helper function to search meetings
 function searchMeetings(meetings, query) {
   const lowerQuery = query.toLowerCase();
-  return meetings.filter(meeting => 
-    meeting.title.toLowerCase().includes(lowerQuery) ||
+  return meetings.filter(meeting =>
+    (meeting.title && meeting.title.toLowerCase().includes(lowerQuery)) ||
     (meeting.notes && meeting.notes.toLowerCase().includes(lowerQuery))
   );
 }
@@ -80,16 +80,15 @@ function checkMeetingConflict(newMeeting, existingMeetings) {
   const newStart = parseISO(newMeeting.datetime);
   const newEnd = addMinutes(newStart, newMeeting.duration_minutes);
 
+  // Simple robust overlap check: two intervals [a,b) and [c,d) overlap if a < d && c < b
   const conflicts = existingMeetings.filter(existing => {
-    const existingStart = parseISO(existing.datetime);
-    const existingEnd = addMinutes(existingStart, existing.duration_minutes);
-
-    // Check if meetings overlap
-    return (
-      (isWithinInterval(newStart, { start: existingStart, end: existingEnd })) ||
-      (isWithinInterval(newEnd, { start: existingStart, end: existingEnd })) ||
-      (isBefore(newStart, existingStart) && isAfter(newEnd, existingEnd))
-    );
+    try {
+      const existingStart = parseISO(existing.datetime);
+      const existingEnd = addMinutes(existingStart, existing.duration_minutes);
+      return (newStart < existingEnd) && (existingStart < newEnd);
+    } catch (e) {
+      return false;
+    }
   });
 
   return conflicts;
@@ -161,78 +160,55 @@ const tools = {
     const meetings = await fetchMeetingsList();
     return formatMeetingsForDisplay(meetings);
   },
-  
+
   create_meeting: async ({ title, datetime, duration_minutes, notes }) => {
     // Check for conflicts first
     const existingMeetings = await fetchMeetingsList();
+    const duration = parseInt(duration_minutes, 10);
     const conflicts = checkMeetingConflict(
-      { datetime, duration_minutes: parseInt(duration_minutes) },
+      { datetime, duration_minutes: duration },
       existingMeetings
     );
 
     if (conflicts.length > 0) {
-      const conflictTitles = conflicts.map(m => m.title).join(', ');
+      const conflictTitles = conflicts.map(m => m.title || m.id).join(', ');
       return `Warning: This meeting conflicts with: ${conflictTitles}. Would you still like to schedule it?`;
     }
 
     const meeting = await saveMeeting({
       title,
       datetime,
-      duration_minutes: parseInt(duration_minutes),
+      duration_minutes: duration,
       notes: notes || null
     });
     return `Meeting "${title}" has been scheduled successfully!`;
   },
-  
+
   update_meeting: async ({ meetingId, datetime }) => {
     const meeting = await modifyMeeting(meetingId, { datetime });
     return `Meeting "${meeting.title}" has been rescheduled successfully!`;
   },
-  
+
   delete_meeting: async ({ meetingId, meetingTitle }) => {
     const meetings = await fetchMeetingsList();
-    let meeting = meetings.find(m => 
-      m.id === meetingId || 
-      (meetingTitle && m.title.toLowerCase().includes(meetingTitle.toLowerCase()))
-    );
-    
+    let meeting = meetings.find(m => {
+      if (!m) return false;
+      if (meetingId && m.id === meetingId) return true;
+      if (meetingTitle && m.title && m.title.toLowerCase().includes(meetingTitle.toLowerCase())) return true;
+      return false;
+    });
+
     if (!meeting) {
       return `I couldn't find that meeting. Please be more specific.`;
     }
-    
+
     await removeMeeting(meeting.id);
     return `Meeting "${meeting.title}" has been cancelled successfully.`;
   },
-  
+
   search_meetings: async ({ query }) => {
     const allMeetings = await fetchMeetingsList();
-    const results = searchMeetings(allMeetings, query);
-    
-    if (results.length === 0) {
-      return `No meetings found matching "${query}".`;
-    }
-    
-    return formatMeetingsForDisplay(results);
-  },
-
-  delete_meeting: async ({ meetingId }) => {
-    const meetings = await fetchMeetingsList();
-    const meeting = meetings.find(m => 
-      m.id === meetingId || 
-      m.title.toLowerCase().includes(meetingId.toLowerCase())
-    );
-
-    if (!meeting) {
-      return `I couldn't find a meeting matching "${meetingId}". Please try again.`;
-    }
-
-    await removeMeeting(meeting.id);
-    return `Meeting "${meeting.title}" has been deleted successfully!`;
-  },
-
-  search_meetings: async ({ query }) => {
-    const meetings = await fetchMeetingsList();
-    const results = searchMeetings(meetings, query);
+    const results = searchMeetings(allMeetings, query || '');
 
     if (results.length === 0) {
       return `No meetings found matching "${query}".`;
@@ -259,7 +235,7 @@ export const meetingAgent = {
     try {
       // Get current meetings for context
       const meetings = await fetchMeetingsList();
-      const meetingsContext = meetings.length > 0 
+      const meetingsContext = meetings.length > 0
         ? `\n\nCurrent meetings:\n${JSON.stringify(meetings, null, 2)}`
         : '\n\nNo meetings scheduled yet.';
 
@@ -268,8 +244,8 @@ export const meetingAgent = {
 
       // Check if user wants to list meetings
       const lowerInput = input.toLowerCase();
-      if (lowerInput.includes('list') || lowerInput.includes('show') || 
-          lowerInput.includes('what meetings') || lowerInput.includes('calendar')) {
+      if (lowerInput.includes('list') || lowerInput.includes('show') ||
+        lowerInput.includes('what meetings') || lowerInput.includes('calendar')) {
         const meetingsList = await tools.list_meetings();
         return {
           output: meetingsList + '\n\nAnything you\'d like to reschedule?',
@@ -278,8 +254,8 @@ export const meetingAgent = {
       }
 
       // Check if user wants to schedule a new meeting
-      if (lowerInput.includes('schedule') || lowerInput.includes('set up') || 
-          lowerInput.includes('create') || lowerInput.includes('new meeting')) {
+      if (lowerInput.includes('schedule') || lowerInput.includes('set up') ||
+        lowerInput.includes('create') || lowerInput.includes('new meeting')) {
         // Use LLM to extract meeting details from conversation
         const extractionPrompt = `Based on the conversation history and current input, extract meeting details.
 If information is missing, ask for it one piece at a time.
@@ -308,8 +284,8 @@ Or respond naturally asking for missing information.`;
           const jsonMatch = responseText.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             const meetingData = JSON.parse(jsonMatch[0]);
-            if (meetingData.action === 'create' && meetingData.title && 
-                meetingData.datetime && meetingData.duration_minutes) {
+            if (meetingData.action === 'create' && meetingData.title &&
+              meetingData.datetime && meetingData.duration_minutes) {
               await tools.create_meeting(meetingData);
               return {
                 output: `Meeting "${meetingData.title}" has been scheduled successfully!`,
@@ -329,8 +305,8 @@ Or respond naturally asking for missing information.`;
       }
 
       // Check if user wants to delete/cancel a meeting
-      if (lowerInput.includes('delete') || lowerInput.includes('cancel') || 
-          lowerInput.includes('remove')) {
+      if (lowerInput.includes('delete') || lowerInput.includes('cancel') ||
+        lowerInput.includes('remove')) {
         const deletePrompt = `User wants to delete/cancel a meeting. Current meetings:
 ${JSON.stringify(meetings, null, 2)}
 
@@ -370,8 +346,8 @@ Or ask for clarification if unclear.`;
       }
 
       // Check if user wants to search meetings
-      if (lowerInput.includes('find') || lowerInput.includes('search') || 
-          lowerInput.includes('look for')) {
+      if (lowerInput.includes('find') || lowerInput.includes('search') ||
+        lowerInput.includes('look for')) {
         const searchPrompt = `User wants to search for meetings. 
 
 User said: ${input}
@@ -408,8 +384,8 @@ Extract the search query from the user's input. Respond with JSON:
       }
 
       // Check if user wants to reschedule
-      if (lowerInput.includes('reschedule') || lowerInput.includes('move') || 
-          lowerInput.includes('change') || lowerInput.includes('delay')) {
+      if (lowerInput.includes('reschedule') || lowerInput.includes('move') ||
+        lowerInput.includes('change') || lowerInput.includes('delay')) {
         // Find the meeting and update it
         const reschedulePrompt = `User wants to reschedule a meeting. Current meetings:
 ${JSON.stringify(meetings, null, 2)}
@@ -434,8 +410,8 @@ Or ask for clarification if unclear.`;
             const updateData = JSON.parse(jsonMatch[0]);
             if (updateData.action === 'update') {
               // Find meeting by ID or title
-              let meeting = meetings.find(m => 
-                m.id === updateData.meetingId || 
+              let meeting = meetings.find(m =>
+                m.id === updateData.meetingId ||
                 m.title.toLowerCase().includes(updateData.meetingId.toLowerCase())
               );
 
